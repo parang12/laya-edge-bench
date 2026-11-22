@@ -1,0 +1,32 @@
+name: laya-edge-bench
+services:
+  broker:
+    image: eclipse-mosquitto:2
+    command: ["mosquitto", "-c", "/mosquitto-no-auth.conf"]
+    ports:
+      - "127.0.0.1:${LAYA_MQTT_PORT:-18883}:1883"
+  gateway:
+    build: .
+    init: true
+    depends_on:
+      - broker
+    cpus: "${LAYA_GATEWAY_CPUS:-2}"
+    mem_limit: "${LAYA_GATEWAY_MEMORY:-2g}"
+    memswap_limit: "${LAYA_GATEWAY_MEMORY:-2g}"
+    environment:
+      LAYA_AI4I_MODEL: /model
+      LAYA_MODEL_LABEL: "${LAYA_MODEL_LABEL:-laya-ai4i-fp32-B_margin_500}"
+      LAYA_TORCH_THREADS: "${LAYA_TORCH_THREADS:-2}"
+      LAYA_MQTT_HOST: broker
+    volumes:
+      - type: volume
+        source: gateway-model
+        target: /model
+        read_only: true
+        volume:
+          nocopy: true
+
+volumes:
+  gateway-model:
+    external: true
+    name: "${LAYA_MODEL_VOLUME:-laya-edge-bench-model-b-margin-500}"

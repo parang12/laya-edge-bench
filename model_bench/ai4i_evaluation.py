@@ -12,12 +12,29 @@ from time import perf_counter
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from ai4i_simulation import CASES
-from ai4i_trial import build_state
+from ai4i_trial import AI4ITrial, build_state
 
 
 LABELS = tuple(expected for _, expected, _ in CASES)
 INVALID = "선택지 밖"
 TEST_DATA = Path(__file__).with_name("ai4i_test_cases.json")
+
+
+def load_trial(path):
+    trial = AI4ITrial(path)
+    trial.load_model()
+    if set(trial.questions["diagnosis"]["criteria"]) != set(LABELS):
+        raise ValueError("AI4I의 다섯 가지 상태를 분류하는 모델이 필요합니다.")
+    return trial
+
+
+def predict_sensors(trial, sensors, cancel=None):
+    timing = {}
+    answer = trial.predict(
+        build_state(sensors, features=trial.features), cancel=cancel,
+        allow_invalid=True, timing=timing,
+    )
+    return {**timing, "prediction": answer if answer in LABELS else INVALID}
 
 
 def score(rows):

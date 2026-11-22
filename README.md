@@ -6,9 +6,9 @@
 
 ![MQTT](https://img.shields.io/badge/Telemetry-MQTT-663399)
 ![Laya](https://img.shields.io/badge/Decision%20Model-Laya-2563EB)
-![Status](https://img.shields.io/badge/Status-Prototype%20Planning-CA8A04)
+![Status](https://img.shields.io/badge/Status-FP32%20Benchmark-2563EB)
 
-[시스템 구성](#시스템-구성) · [비교 실험](#비교-실험) · [진행 계획](#진행-계획)
+[Docker 측정 실행](#docker-측정-실행) · [시스템 구성](#시스템-구성) · [비교 실험](#비교-실험) · [진행 계획](#진행-계획)
 
 </div>
 
@@ -26,45 +26,37 @@ laya-edge-bench/
 ├── notebooks/        # 파인튜닝·경량화 실험 노트북
 ├── data/             # 데이터 설명과 예시
 ├── results/          # 실험 결과와 비교 기록
-├── model_bench/      # AI4I 모델 검증·MQTT 측정·엑셀 내보내기
+├── model_bench/      # Docker 실행 설정 · MQTT 측정 CLI · Windows 앱
 └── 모델_측정_실행.cmd # Windows 측정 도구 실행
 ```
 
-## AI4I 모델 측정 도구
+## Docker 측정 실행
 
-Windows와 Python이 필요합니다. Python 3.12에서 실행을 확인했습니다. 저장소를 내려받고, 처음 한 번 프로젝트 폴더에서 라이브러리를 설치합니다.
+[Docker 실행 및 측정 가이드](./docs/docker-benchmark.md)에 Windows 환경 준비, 모델 다운로드, Docker 실행, 결과 저장 절차를 정리했습니다. 기준 모델은 [B_margin_500 FP32 릴리스](https://github.com/parang12/laya-edge-bench/releases/tag/ai4i-b-margin-fp32)에서 받습니다.
 
-~~~powershell
-python -m venv model_bench/.venv
-.\model_bench\.venv\Scripts\python.exe -m pip install -r model_bench/requirements.txt
-~~~
+Windows에서 측정 도구가 시험 센서값을 재생하고 결과를 기록합니다. Laya 추론과 MQTT 브로커는 Docker에서 실행합니다. 기본 게이트웨이 조건은 **CPU 2코어 분량 · RAM 2 GiB · 스왑 없음**입니다.
 
-1. AI4I용 Laya 모델을 압축 해제합니다. 선택할 폴더의 최상위에 `model.safetensors`, `rl_agent_config.json`, `questions.json`, `encoder/`, `tokenizer/`가 있어야 합니다. B_margin_500이라면 `run_config.json`도 포함합니다.
-2. [모델_측정_실행.cmd](./모델_측정_실행.cmd)를 열고 **모델 폴더 선택**을 누릅니다. B_margin_500에는 학습 때 사용한 16개 특징을, v7에는 기존 9개 특징을 적용합니다.
-3. **모델 검증 · 80건**이나 **MQTT 테스트 · 100회**를 실행한 뒤 **엑셀로 내보내기**를 눌러 결과를 저장합니다.
+| 측정 | 실행 방법 | 저장 형식 |
+|---|---|---|
+| 연결과 응답 확인 | `모델_측정_실행.cmd`에서 **Docker MQTT · 100회** | Excel |
+| 논문 비교 측정 | `python model_bench/benchmark_mqtt.py --requests 1000` | 요약 및 요청별 JSON |
 
-| 버튼 | 기록하는 결과 |
-|---|---|
-| **모델 검증 · 80건** | 고정 시험 데이터의 정확도, Macro-F1, 유형별 재현율 |
-| **MQTT 테스트 · 100회** | 고유 시험 80건과 반복 20건의 송수신 결과, 고유 80건의 정확도, 전체 응답 시간 중앙값·p95 |
-| **엑셀로 내보내기** | 건별 정답·예측, 모델 입력·출력 시각, 판단 시간, MQTT 전체 응답 시간 |
+Windows 앱의 **모델 검증 · 80건**과 **MQTT 테스트 · 100회**는 PC 내부에서 모델을 구동하는 개발용 모드입니다.
 
-현재 측정 도구는 프로그램을 실행한 PC에서 MQTT 브로커와 모델을 함께 구동합니다. 이 버튼으로 얻은 결과는 **PC 내부 MQTT 측정**으로 기록합니다. 라이브러리와 모델 폴더를 준비하면 인터넷 연결 없이 실행할 수 있습니다. Docker에서 추론하는 구성은 아래의 배치 계획에 설명합니다.
+시험 데이터는 Stefan Matzka의 [AI4I 2020 Predictive Maintenance Dataset](https://archive.ics.uci.edu/dataset/601/ai4i%2B2020%2Bpredictive%2Bmaintenance%2Bdataset) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/))에서 팀 분할에 따라 80건을 골라 측정 도구의 입력 형식으로 변환한 것입니다. [기준 모델 학습 및 데이터 분할](./docs/ai4i-b-margin-500-finetuning.md)
 
-시험 데이터는 Stefan Matzka의 [AI4I 2020 Predictive Maintenance Dataset](https://archive.ics.uci.edu/dataset/601/ai4i%2B2020%2Bpredictive%2Bmaintenance%2Bdataset) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/))에서 팀 분할에 따라 80건을 골라, 측정 도구의 입력 형식으로 변환한 것입니다.
-
-- [B_margin_500 파인튜닝 기록](./docs/ai4i-b-margin-500-finetuning.md) · 기준 모델의 입력, 학습 설정, 시험 결과
-- [v7 파인튜닝 기록](./docs/ai4i-v7-finetuning.md) · 비교 모델의 학습과 평가 이력
+[Laya 원본 저장소](https://github.com/NandhaKishorM/laya) · [Laya Multilingual 모델](https://huggingface.co/convaiinnovations/laya-multilingual) · [경량화 기법 선정 근거](./docs/compression-design.md)
 
 ## 시스템 구성
 
-아래는 AI4I 경량화 모델을 비교하기 위한 **Docker 가상 게이트웨이 구성 계획**입니다.
+아래는 AI4I 경량화 모델을 비교하는 **Docker 가상 게이트웨이 구성**입니다. MQTT 브로커와 추론 게이트웨이는 Docker에서 각각 실행합니다. 게이트웨이는 전용 Docker 볼륨에서 모델을 불러옵니다.
 
 ~~~mermaid
 flowchart LR
-    P["호스트 PC<br/>가상 센서 · 측정 도구"] <-->|"센서 요청 · 판단 응답"| B["호스트 PC<br/>MQTT 브로커"]
+    P["호스트 PC<br/>가상 센서 · 측정 도구"] <-->|"센서 요청 · 판단 응답"| B["Docker<br/>MQTT 브로커"]
     subgraph EDGE["Docker 가상 IoT 게이트웨이"]
-        G["게이트웨이 처리부"] <-->|"모델 입력 · 판정 결과"| M["비교 모델"]
+        G["게이트웨이 처리부"] <-->|"모델 입력 · 판정 결과"| M["Laya 추론"]
+        V[("Docker 모델 볼륨")] -.->|"/model · 읽기 전용"| M
     end
     B <-->|"센서 요청 · 판단 응답"| G
 ~~~
@@ -86,7 +78,7 @@ flowchart LR
 
 ## 모델 다운로드
 
-기준 Laya, INT8 양자화 모델, 지식 증류 학생 모델은 준비되는 대로 [GitHub Releases](https://github.com/parang12/laya-edge-bench/releases)에 게시할 예정입니다. 각 릴리스에서 모델 파일과 해당 버전의 사용 안내를 확인할 수 있습니다.
+**[B_margin_500 FP32](https://github.com/parang12/laya-edge-bench/releases/tag/ai4i-b-margin-fp32)**를 기준 모델로 사용합니다. INT8과 지식 증류 학생 모델은 준비되는 대로 [GitHub Releases](https://github.com/parang12/laya-edge-bench/releases)에 게시할 예정입니다.
 
 ## 비교 실험
 
@@ -98,7 +90,7 @@ flowchart LR
 | **INT8 양자화** | 같은 기준 FP32 체크포인트를 양자화합니다. |
 | **소형 학생 FP32** | 기준 FP32를 교사로 사용해 더 작은 학생 모델에 판단을 증류합니다. |
 
-**평가 방법.** 검증 데이터로 경량화 설정을 고른 뒤, 같은 AI4I 시험 80건으로 세 모델을 비교합니다. 동일 호스트에서 컨테이너의 CPU·RAM 한도, 스레드 수, 예열과 요청 순서를 맞춥니다. MQTT 왕복 지연은 같은 브로커를 사용해 반복 요청 20건을 포함한 100회에서 측정하며, 정확도는 고유 80건으로 계산합니다.
+**평가 방법.** 검증 데이터로 경량화 설정을 고른 뒤, 같은 AI4I 시험 80건으로 세 모델을 비교합니다. 동일 호스트에서 컨테이너의 CPU·RAM 한도, 스레드 수, 예열과 요청 순서를 맞춥니다. MQTT 지연 비교에는 고유 80건과 반복 20건을 묶은 100건 순서를 10회 재생합니다. 정확도와 Macro-F1은 처음 등장하는 고유 80건으로 계산합니다.
 
 | 측정 항목 | 비교 내용 |
 |---|---|
@@ -118,4 +110,4 @@ flowchart LR
 | **2주차 · 경량화와 가상 게이트웨이** | INT8과 소형 학생 FP32를 준비하고, Docker에서 센서 요청 수신·추론·응답을 연결합니다. | 세 모델의 실행 성공 여부, 판단 성능, 최대 메모리, 추론·MQTT 왕복 지연을 같은 자원 한도에서 기록합니다. |
 | **3주차 · 결과 분석과 시연** | 주요 실험을 재실행하고 오판을 분석한 뒤 보고서와 발표 자료를 작성합니다. | 비교표·그래프, 논문 초안, 발표 자료, 시연 영상을 준비합니다. |
 
-**현재 상태 · B_margin_500과 PC 내부 MQTT 측정 도구를 연결했습니다.** Docker 게이트웨이 연결과 세 모델의 자원 제한 비교가 다음 단계입니다.
+**현재 상태 · PC 내부 MQTT와 Docker 게이트웨이 MQTT를 측정할 수 있습니다.** 다음 단계에서는 INT8과 증류 모델을 준비해 같은 CPU·RAM 한도에서 기준 모델과 비교합니다.

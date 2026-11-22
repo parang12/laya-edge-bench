@@ -1,15 +1,13 @@
 """Coordinate model loading and evaluations for the desktop application."""
 from pathlib import Path
-from statistics import median
 from threading import Event, Lock, Thread
 from time import perf_counter
 import json
-import math
+import os
 
-from ai4i_trial import AI4ITrial, build_state
-from ai4i_evaluation import LABELS, INVALID, score
+from ai4i_evaluation import load_trial, predict_sensors, score
 from export_report import export_report
-from mqtt_bench import run_mqtt
+from mqtt_bench import DEFAULT_DOCKER_PORT, latency_summary as _latency_summary, run_mqtt
 
 
 class BenchController:
@@ -19,7 +17,7 @@ class BenchController:
             dataset = json.load(handle)
         self.cases = dataset["cases"]
         self.source = dataset["source"]
-        self.model_info = {}
+        self.model_info = {"dataset_description": self.source["description"]}
         self.trial = None
         self.validation = None
         self.mqtt_result = None
@@ -56,12 +54,8 @@ class BenchController:
     def load(self, path, callback):
         def task(send):
             send({"event": "status", "message": "모델을 불러오고 있습니다."})
-            trial = AI4ITrial(Path(path))
             start = perf_counter()
-            trial.load_model()
-            if set(trial.questions["diagnosis"]["criteria"]) != set(LABELS):
-                raise ValueError("AI4I의 다섯 고장 유형을 분류하는 모델이 필요합니다.")
-            self.trial = trial
+            self.trial = load_trial(Path(path))
             self.model_info = {"path": str(Path(path)), "load_ms": (perf_counter() - start) * 1000,
                                "dataset_description": self.source["description"]}
             self.validation = None
@@ -71,13 +65,7 @@ class BenchController:
         self._start(task, callback)
 
     def _predict(self, sensors):
-        result = {}
-        answer = self.trial.predict(
-            build_state(sensors, features=self.trial.features),
-            cancel=self.cancel, allow_invalid=True, timing=result,
-        )
-        result["prediction"] = answer if answer in LABELS else INVALID
-        return result
+        return predict_sensors(self.trial, sensors, self.cancel)
 
     def validate(self, callback):
         if self.trial is None:
@@ -108,41 +96,59 @@ class BenchController:
             send({"event": "result", "message": message, "data": result})
         self._start(task, callback)
 
-    def mqtt(self, callback):
-        if self.trial is None:
+    def mqtt(self, callback, *, external=False):
+        if not external and self.trial is None:
             raise ValueError("모델을 먼저 불러오세요.")
         def task(send):
-            result = {"status": "running", "rows": [], "summary": {}}
+            target = "Docker 게이트웨이" if external else "PC 내부"
+            result = {"status": "running", "rows": [], "summary": {}, "target": target,
+                      "model": None if external else Path(self.model_info["path"]).name}
             self.mqtt_result = result
-            send({"event": "status", "message": "로컬 MQTT 연결 중입니다."})
+            send({"event": "status", "message": f"{target} MQTT 연결 중입니다."})
 
             def on_record(row):
                 result["rows"].append(row)
                 send({"event": "progress", "message": f"MQTT 테스트 {len(result['rows'])} / 100회",
                       "progress": len(result["rows"])})
 
+            def on_gateway(metadata):
+                result.update(gateway=metadata, model=metadata.get("model"))
+
             try:
-                run_mqtt(self.cases, self._predict, on_record=on_record, stop_event=self.cancel)
+                address = None
+                if external:
+                    port = int(os.environ.get("LAYA_MQTT_PORT", DEFAULT_DOCKER_PORT))
+                    if not 1 <= port <= 65535:
+                        raise ValueError("LAYA_MQTT_PORT는 1~65535 사이여야 합니다.")
+                    address = ("127.0.0.1", port)
+                    result["broker"] = f"{address[0]}:{address[1]}"
+                run_mqtt(self.cases, None if external else self._predict,
+                         on_record=on_record, stop_event=self.cancel, broker_address=address,
+                         on_gateway=on_gateway if external else None)
                 result["status"] = "complete" if len(result["rows"]) == 100 else "stopped"
             except Exception:
                 result["status"] = "error"
                 raise
             rows = result["rows"]
             successes = [r for r in rows if r["status"] == "ok"]
-            times = sorted(r["total_ms"] for r in successes if r["total_ms"] is not None)
             unique = [r for r in rows if not r["repeated"]]
-            summary = {"accuracy": sum(r["status"] == "ok" and r["prediction"] == r["expected"] for r in unique) / 80 if len(unique) == 80 else None,
+            metrics = score(unique) if len(unique) == 80 else {}
+            result["metrics"] = metrics
+            center, p95 = _latency_summary(successes, "total_ms")
+            inference_center, inference_p95 = _latency_summary(successes, "inference_ms")
+            summary = {"accuracy": metrics.get("accuracy"),
+                       "macro_f1": metrics.get("macro_f1"),
                        "accuracy_n": len(unique),
                        "success_count": len(successes),
                        "timeout_count": sum(r["status"] == "timeout" for r in rows),
                        "error_count": sum(r["status"] not in ("ok", "timeout") for r in rows),
-                       "median_ms": median(times) if times else None,
-                       "p95_ms": times[math.ceil(.95 * len(times))-1] if times else None}
+                       "median_ms": center, "p95_ms": p95,
+                       "inference_median_ms": inference_center, "inference_p95_ms": inference_p95}
             result["summary"] = summary
             if result["status"] != "complete":
                 message = f"MQTT 테스트 중지 · {len(rows)} / 100회"
             else:
-                latency = f"{summary['median_ms']:.1f} ms" if times else "측정 없음"
+                latency = f"{center:.1f} ms" if center is not None else "측정 없음"
                 message = f"MQTT {len(rows)}회 · 응답 성공 {len(successes)}회 · 중앙값 {latency}"
             send({"event": "result", "message": message, "data": result})
         self._start(task, callback)

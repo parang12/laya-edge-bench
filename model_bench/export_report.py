@@ -47,6 +47,7 @@ def export_report(path, model_info=None, validation=None, mqtt=None):
     mqtt = mqtt or {}
     metrics = validation.get("metrics") or {}
     summary = mqtt.get("summary") or {}
+    gateway = mqtt.get("gateway") or {}
     validation_rows = validation.get("rows") or []
     mqtt_rows = mqtt.get("rows") or []
 
@@ -73,6 +74,20 @@ def export_report(path, model_info=None, validation=None, mqtt=None):
         ("MQTT 전체 응답 시간 p95 (ms)", summary.get("p95_ms")),
         ("시간 측정 범위", "모델 입력·출력 시각은 추론 호출 직전과 결과 반환 직후의 UTC 시각입니다. 모델 판단 시간은 그 사이의 경과 시간입니다. 전체 응답 시간은 MQTT 요청 전송부터 응답 수신까지입니다."),
         ("반복 사례", "MQTT 반복 20건은 시간 통계에 포함하며, 고유 사례 정확도에는 포함하지 않습니다."),
+        ("MQTT 실행 위치", mqtt.get("target")),
+        ("MQTT 실행 모델", mqtt.get("model")),
+        ("MQTT 브로커 주소", mqtt.get("broker")),
+        ("MQTT Macro-F1", summary.get("macro_f1")),
+        ("MQTT 모델 추론 중앙값 (ms)", summary.get("inference_median_ms")),
+        ("MQTT 모델 추론 p95 (ms)", summary.get("inference_p95_ms")),
+        ("게이트웨이 CPU 한도 (코어)", gateway.get("cpu_limit")),
+        ("게이트웨이 메모리 한도 (MiB)", gateway.get("memory_limit_mib")),
+        ("게이트웨이 최대 메모리 (MiB)", gateway.get("memory_peak_mib")),
+        ("게이트웨이 추론 스레드", gateway.get("torch_threads")),
+        ("게이트웨이 예열 횟수", gateway.get("warmup_count")),
+        ("게이트웨이 입력 특징 설정", gateway.get("features")),
+        ("게이트웨이 Laya 버전", gateway.get("laya_version")),
+        ("게이트웨이 PyTorch 버전", gateway.get("torch_version")),
     ]
     _table(overview, (("name", "항목"), ("value", "값")),
            ({"name": name, "value": value} for name, value in entries))
@@ -81,17 +96,21 @@ def export_report(path, model_info=None, validation=None, mqtt=None):
     for row in overview.iter_rows(min_row=2):
         for cell in row:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
-    for row_index in (8, 9, 12):
-        overview.cell(row_index, 2).number_format = "0.00%"
+    percent_labels = {"모델 검증 정확도", "모델 검증 Macro-F1", "MQTT 정확도", "MQTT Macro-F1"}
+    for label, value in overview.iter_rows(min_row=2):
+        if label.value in percent_labels:
+            value.number_format = "0.00%"
 
-    classes = book.create_sheet("유형별 성능")
-    _table(classes, (
+    class_columns = (
         ("label", "실제 유형"), ("correct", "맞힌 수"), ("total", "전체"),
         ("precision", "정밀도"), ("recall", "재현율"), ("f1", "F1"),
-    ), metrics.get("classes") or [])
-    for row in classes.iter_rows(min_row=2, min_col=4, max_col=6):
-        for cell in row:
-            cell.number_format = "0.00%"
+    )
+    for sheet_title, scores in (("유형별 성능", metrics), ("MQTT 유형별 성능", mqtt.get("metrics") or {})):
+        classes = book.create_sheet(sheet_title)
+        _table(classes, class_columns, scores.get("classes") or [])
+        for row in classes.iter_rows(min_row=2, min_col=4, max_col=6):
+            for cell in row:
+                cell.number_format = "0.00%"
 
     validation_sheet = book.create_sheet("모델 검증")
     model_timing_columns = (

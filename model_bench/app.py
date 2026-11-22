@@ -96,10 +96,13 @@ class BenchApp(tk.Tk):
                                       style="Primary.TButton",
                                       command=lambda: self._start("mqtt"))
         self.mqtt_button.pack(side="left", padx=(0, 8))
+        self.docker_button = ttk.Button(row, text="Docker MQTT · 100회",
+                                        command=lambda: self._start("docker"))
+        self.docker_button.pack(side="left", padx=(0, 8))
         self.stop_button = ttk.Button(row, text="중지", command=self._stop)
         self.stop_button.pack(side="left")
         ttk.Label(tests, style="Muted.TLabel",
-                  text="MQTT 테스트는 PC 내부 브로커를 사용합니다.").pack(
+                  text="Docker MQTT는 컨테이너에 올라간 모델을 측정합니다.").pack(
             anchor="w", pady=(10, 0))
 
         result = ttk.Frame(outer, style="Card.TFrame", padding=20)
@@ -124,6 +127,7 @@ class BenchApp(tk.Tk):
         test_state = "normal" if self.loaded and not self.busy else "disabled"
         self.validation_button.configure(state=test_state)
         self.mqtt_button.configure(state=test_state)
+        self.docker_button.configure(state="disabled" if self.busy else "normal")
         self.stop_button.configure(state="normal" if self.busy else "disabled")
         self.export_button.configure(state="normal" if self.has_results and not self.busy else "disabled")
 
@@ -168,12 +172,15 @@ class BenchApp(tk.Tk):
                          loading=True)
 
     def _start(self, action):
-        if not self.loaded or self.busy:
+        if self.busy or (action != "docker" and not self.loaded):
             return
-        description = "모델 검증" if action == "validate" else "MQTT 테스트"
+        description = {"validate": "모델 검증", "mqtt": "MQTT 테스트", "docker": "Docker MQTT"}[action]
         self.status.set(f"{description}을 준비하고 있습니다.")
         self.summary.set("진행 상황을 기다리고 있습니다.")
-        self._start_call(action, lambda: getattr(self.controller, action)(self._queue_event))
+        if action == "validate":
+            self._start_call(action, lambda: self.controller.validate(self._queue_event))
+        else:
+            self._start_call(action, lambda: self.controller.mqtt(self._queue_event, external=action == "docker"))
 
     def _stop(self):
         if self.busy:
@@ -207,7 +214,7 @@ class BenchApp(tk.Tk):
         if isinstance(data, dict):
             status = {"complete": "완료", "stopped": "중지", "error": "오류",
                       "running": "진행 중"}.get(data.get("status"), "확인 중")
-            if "metrics" in data:
+            if "metrics" in data and "summary" not in data:
                 metrics = data.get("metrics") or {}
                 rows = data.get("rows") or []
                 result = [
@@ -230,6 +237,8 @@ class BenchApp(tk.Tk):
                 result = [
                     f"진행  {len(rows)} / 100회  ·  상태  {status}",
                 ]
+                if data.get("model"):
+                    result.append(f"{data['target']}  ·  {data['model']}")
                 if summary:
                     result.append(
                         f"응답 성공  {summary.get('success_count', 0)}회    "
@@ -240,12 +249,18 @@ class BenchApp(tk.Tk):
                     if accuracy is not None:
                         result.append(
                             f"고유 80건 기준 정확도  {accuracy:.2%}  "
-                            f"({summary.get('accuracy_n', 0)}건 처리)"
+                            f"·  Macro-F1  {summary['macro_f1']:.4f}"
                         )
                     middle = summary.get("median_ms")
                     p95 = summary.get("p95_ms")
                     if middle is not None and p95 is not None:
                         result.append(f"전체 응답 시간  중앙값 {middle:.2f} ms  ·  p95 {p95:.2f} ms")
+                    inference = summary.get("inference_median_ms")
+                    if inference is not None:
+                        result.append(f"모델 추론  중앙값 {inference:.2f} ms  ·  p95 {summary['inference_p95_ms']:.2f} ms")
+                    peak = (data.get("gateway") or {}).get("memory_peak_mib")
+                    if peak is not None:
+                        result.append(f"컨테이너 최대 메모리  {peak:,.1f} MiB")
                 return "\n".join(result)
             labels = {
                 "accuracy": "정확도",
